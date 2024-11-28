@@ -1,0 +1,106 @@
+import pandas as pd
+
+def analyze_employee_logins(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyzes employee login matches within the same emp_id only.
+    """
+    # Create a copy to avoid modifying original data
+    work_df = df.copy()
+    
+    # Step 1: Find valid groups (emp_id, emp_type combinations)
+    group_analysis = (
+        work_df.groupby(['emp_id', 'emp_type'])
+        .agg({
+            'flag': lambda x: ('Y' in x.values) and ('N' in x.values),
+            'status': lambda x: 'T' not in x.values
+        })
+        .reset_index()
+    )
+    
+    # Rename columns for clarity
+    group_analysis.columns = ['emp_id', 'emp_type', 'has_both_flags', 'no_status_t']
+    
+    # Identify valid groups (both conditions met)
+    group_analysis['valid_group'] = (
+        group_analysis['has_both_flags'] & 
+        group_analysis['no_status_t']
+    )
+    
+    # Merge back to original dataframe
+    work_df = work_df.merge(
+        group_analysis[['emp_id', 'emp_type', 'valid_group']],
+        on=['emp_id', 'emp_type'],
+        how='left'
+    )
+    
+    # Filter for records to check (valid group and flag='Y')
+    records_to_check = work_df[
+        (work_df['valid_group'] == True) &
+        (work_df['flag'] == 'Y')
+    ].copy()
+    
+    def determine_match_type(row):
+        # Get all uat_logins for this emp_id
+        same_emp_records = work_df[work_df['emp_id'] == row['emp_id']].copy()
+        
+        dev_login = str(row['dev_login']).lower()
+        match_types = []
+        
+        # Compare with each UAT login for the same employee
+        for _, emp_record in same_emp_records.iterrows():
+            uat_login = str(emp_record['uat_login']).lower()
+            
+            if dev_login == uat_login:
+                match_types.append('FULL_MATCH')
+            elif len(dev_login) >= 3 and len(uat_login) >= 3 and dev_login[:3] == uat_login[:3]:
+                match_types.append('PARTIAL_MATCH')
+            else:
+                match_types.append('NO_MATCH')
+        
+        # Return best match type found
+        if 'FULL_MATCH' in match_types:
+            return 'FULL_MATCH'
+        elif 'PARTIAL_MATCH' in match_types:
+            return 'PARTIAL_MATCH'
+        else:
+            return 'NO_MATCH'
+    
+    # Add match type to results
+    records_to_check['match_type'] = records_to_check.apply(determine_match_type, axis=1)
+    
+    # Final results
+    result_df = records_to_check[[
+        'emp_id', 
+        'emp_type', 
+        'dev_login', 
+        'uat_login', 
+        'status',
+        'flag',
+        'match_type'
+    ]].copy()
+    
+    return result_df
+
+# Test with sample data
+def test_with_dataframe():
+    test_data = {
+        'emp_id':    ['E001', 'E001', 'E001', 'E002', 'E002', 'E003'],
+        'emp_type':  ['DEV',  'DEV',  'DEV',  'QA',   'QA',   'DEV'],
+        'dev_login': ['john_dev', 'john_dev', 'john_dev', 'mary_dev', 'mary_dev', 'bob_dev'],
+        'uat_login': ['john_uat', 'john_dev', 'johnny',   'mary_uat', 'mary_dev', 'bob_dev'],
+        'status':    ['A', 'A', 'A', 'T', 'A', 'A'],
+        'flag':      ['Y', 'N', 'N', 'Y', 'N', 'Y']
+    }
+    
+    input_df = pd.DataFrame(test_data)
+    
+    print("\nInput DataFrame:")
+    print(input_df)
+    
+    result_df = analyze_employee_logins(input_df)
+    
+    print("\nResult DataFrame:")
+    print(result_df)
+
+if __name__ == "__main__":
+    test_with_dataframe()
